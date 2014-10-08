@@ -1,7 +1,13 @@
 'use strict';
 
 describe("ngAnimate", function() {
-
+  var $originalAnimate;
+  beforeEach(module(function($provide) {
+    $provide.decorator('$animate', function($delegate) {
+      $originalAnimate = $delegate;
+      return $delegate;
+    });
+  }));
   beforeEach(module('ngAnimate'));
   beforeEach(module('ngAnimateMock'));
 
@@ -3408,8 +3414,168 @@ describe("ngAnimate", function() {
         $animate.triggerReflow();
 
         expect(log.length).toBe(2);
-        expect(log[0]).toEqual({ name : 'addClass', className : 'one five' });
+        expect(log[0]).toEqual({ name : 'addClass', className : 'one four five' });
         expect(log[1]).toEqual({ name : 'removeClass', className : 'three' });
+      });
+    });
+
+    it('should intelligently cancel out redundant class-based animations', function() {
+      var log = [];
+      var track = function(name) {
+        return function() {
+          log.push({ name : name, className : arguments[1] });
+        };
+      };
+      module(function($animateProvider) {
+        $animateProvider.register('.animate', function() {
+          return {
+            addClass    : track('addClass'),
+            removeClass : track('removeClass')
+          };
+        });
+      });
+      inject(function($rootScope, $animate, $compile, $rootElement, $document) {
+        $animate.enabled(true);
+
+        var element = $compile('<div class="animate three four"></div>')($rootScope);
+        $rootElement.append(element);
+        angular.element($document[0].body).append($rootElement);
+
+        $animate.removeClass(element, 'one');
+        $rootScope.$digest();
+        $animate.triggerReflow();
+        expect(log.length).toBe(0);
+        $animate.triggerCallbacks();
+
+        $animate.addClass(element, 'two');
+        $animate.addClass(element, 'two');
+        $animate.removeClass(element, 'two');
+        $rootScope.$digest();
+        $animate.triggerReflow();
+        expect(log.length).toBe(0);
+        $animate.triggerCallbacks();
+
+        $animate.removeClass(element, 'three');
+        $animate.addClass(element, 'three');
+        $rootScope.$digest();
+        $animate.triggerReflow();
+        expect(log.length).toBe(0);
+        $animate.triggerCallbacks();
+
+        $animate.removeClass(element, 'four');
+        $animate.addClass(element, 'four');
+        $animate.removeClass(element, 'four');
+        $rootScope.$digest();
+        $animate.triggerReflow();
+        expect(log.length).toBe(1);
+        $animate.triggerCallbacks();
+        expect(log[0]).toEqual({ name : 'removeClass', className : 'four' });
+
+        $animate.addClass(element, 'five');
+        $animate.addClass(element, 'five');
+        $animate.addClass(element, 'five');
+        $animate.removeClass(element, 'five');
+        $animate.addClass(element, 'five');
+        $rootScope.$digest();
+        $animate.triggerReflow();
+        expect(log.length).toBe(2);
+        $animate.triggerCallbacks();
+        expect(log[1]).toEqual({ name : 'addClass', className : 'five' });
+      });
+    });
+
+    it('should skip class-based animations if the element is removed before the digest occurs', function() {
+      var spy = jasmine.createSpy();
+      module(function($animateProvider) {
+        $animateProvider.register('.animated', function() {
+          return {
+            beforeAddClass : spy,
+            beforeRemoveClass : spy,
+            beforeSetClass : spy
+          };
+        });
+      });
+      inject(function($rootScope, $animate, $compile, $rootElement, $document) {
+        $animate.enabled(true);
+
+        var one = $compile('<div class="animated"></div>')($rootScope);
+        var two = $compile('<div class="animated"></div>')($rootScope);
+        var three = $compile('<div class="animated three"></div>')($rootScope);
+
+        $rootElement.append(one);
+        $rootElement.append(two);
+        angular.element($document[0].body).append($rootElement);
+
+        $animate.addClass(one, 'active-class');
+        one.remove();
+
+        $rootScope.$digest();
+        expect(spy).not.toHaveBeenCalled();
+
+        $animate.addClass(two, 'active-class');
+
+        $rootScope.$digest();
+        expect(spy).toHaveBeenCalled();
+
+        spy.reset();
+        $animate.removeClass(two, 'active-class');
+        two.remove();
+
+        $rootScope.$digest();
+        expect(spy).not.toHaveBeenCalled();
+
+        $animate.setClass(three, 'active-class', 'three');
+        three.remove();
+
+        $rootScope.$digest();
+        expect(spy).not.toHaveBeenCalled();
+      });
+    });
+
+    it('should skip class-based animations if ngRepeat has marked the element or its parent for removal', function() {
+      var spy = jasmine.createSpy();
+      module(function($animateProvider) {
+        $animateProvider.register('.animated', function() {
+          return {
+            beforeAddClass : spy,
+            beforeRemoveClass : spy,
+            beforeSetClass : spy
+          };
+        });
+      });
+      inject(function($rootScope, $animate, $compile, $rootElement, $document) {
+        $animate.enabled(true);
+
+        var element = $compile(
+          '<div>' +
+          '  <div ng-repeat="item in items" class="animated">' +
+          '    <span>{{ $index }}</span>' +
+          '  </div>' +
+          '</div>'
+        )($rootScope);
+
+        $rootElement.append(element);
+        angular.element($document[0].body).append($rootElement);
+
+        $rootScope.items = [1,2,3];
+        $rootScope.$digest();
+
+        var child = element.find('div');
+
+        $animate.addClass(child, 'start-animation');
+        $rootScope.items = [2,3];
+        $rootScope.$digest();
+
+        expect(spy).not.toHaveBeenCalled();
+
+        var innerChild = element.find('span');
+
+        $animate.addClass(innerChild, 'start-animation');
+        $rootScope.items = [3];
+        $rootScope.$digest();
+
+        expect(spy).not.toHaveBeenCalled();
+        dealoc(element);
       });
     });
 
@@ -3757,6 +3923,64 @@ describe("ngAnimate", function() {
       expect(inner.hasClass('on-add-active')).toBe(false);
     }));
 
+    it("should reset the getComputedStyle lookup cache even when no animation is found",
+      inject(function($compile, $rootScope, $animate, $sniffer, $document) {
+
+      if (!$sniffer.transitions) return;
+
+      $animate.enabled();
+
+      var html = '<div>' +
+                 '  <div class="toggle" ng-if="onOff">On or Off</div>' +
+                 '</div>';
+
+      ss.addRule('.activated .toggle', '-webkit-transition:1s linear all;' +
+                                               'transition:1s linear all;');
+
+      var child, element = $compile(html)($rootScope);
+
+      $rootElement.append(element);
+      jqLite($document[0].body).append($rootElement);
+
+      $rootScope.onOff = true;
+      $rootScope.$digest();
+
+      child = element.find('div');
+      expect(child).not.toHaveClass('ng-enter');
+      expect(child.parent()[0]).toEqual(element[0]);
+      $animate.triggerReflow();
+
+      $rootScope.onOff = false;
+      $rootScope.$digest();
+
+      child = element.find('div');
+      expect(child.parent().length).toBe(0);
+      $animate.triggerReflow();
+
+      element.addClass('activated');
+      $rootScope.$digest();
+      $animate.triggerReflow();
+
+      $rootScope.onOff = true;
+      $rootScope.$digest();
+
+      child = element.find('div');
+      expect(child).toHaveClass('ng-enter');
+      $animate.triggerReflow();
+      expect(child).toHaveClass('ng-enter-active');
+
+      browserTrigger(child, 'transitionend',
+        { timeStamp: Date.now() + 1000, elapsedTime: 2000 });
+
+      $animate.triggerCallbacks();
+
+      $rootScope.onOff = false;
+      $rootScope.$digest();
+
+      expect(child).toHaveClass('ng-leave');
+      $animate.triggerReflow();
+      expect(child).toHaveClass('ng-leave-active');
+    }));
 
     it("should cancel and perform the dom operation only after the reflow has run",
       inject(function($compile, $rootScope, $animate, $sniffer) {
@@ -4652,5 +4876,203 @@ describe("ngAnimate", function() {
         dealoc(element);
       }));
     });
+  });
+
+
+  describe('CSS class DOM manipulation', function() {
+    var element;
+    var addClass;
+    var removeClass;
+
+    beforeEach(module(provideLog));
+
+    afterEach(function() {
+      dealoc(element);
+    });
+
+    function setupClassManipulationSpies() {
+      inject(function($animate) {
+        addClass = spyOn($originalAnimate, '$$addClassImmediately').andCallThrough();
+        removeClass = spyOn($originalAnimate, '$$removeClassImmediately').andCallThrough();
+      });
+    }
+
+    function setupClassManipulationLogger(log) {
+      inject(function($animate) {
+        var addClassImmediately = $originalAnimate.$$addClassImmediately;
+        var removeClassImmediately = $originalAnimate.$$removeClassImmediately;
+        addClass = spyOn($originalAnimate, '$$addClassImmediately').andCallFake(function(element, classes) {
+          var names = classes;
+          if (Object.prototype.toString.call(classes) === '[object Array]') names = classes.join( ' ');
+          log('addClass(' + names + ')');
+          return addClassImmediately.call($originalAnimate, element, classes);
+        });
+        removeClass = spyOn($originalAnimate, '$$removeClassImmediately').andCallFake(function(element, classes) {
+          var names = classes;
+          if (Object.prototype.toString.call(classes) === '[object Array]') names = classes.join( ' ');
+          log('removeClass(' + names + ')');
+          return removeClassImmediately.call($originalAnimate, element, classes);
+        });
+      });
+    }
+
+
+    it('should defer class manipulation until end of digest', inject(function($rootScope, $animate, log) {
+      setupClassManipulationLogger(log);
+      element = jqLite('<p>test</p>');
+
+      $rootScope.$apply(function() {
+        $animate.addClass(element, 'test-class1');
+        expect(element).not.toHaveClass('test-class1');
+
+        $animate.removeClass(element, 'test-class1');
+
+        $animate.addClass(element, 'test-class2');
+        expect(element).not.toHaveClass('test-class2');
+
+        $animate.setClass(element, 'test-class3', 'test-class4');
+        expect(element).not.toHaveClass('test-class3');
+        expect(element).not.toHaveClass('test-class4');
+        expect(log).toEqual([]);
+      });
+
+      expect(element).not.toHaveClass('test-class1');
+      expect(element).not.toHaveClass('test-class4');
+      expect(element).toHaveClass('test-class2');
+      expect(element).toHaveClass('test-class3');
+      expect(log).toEqual(['addClass(test-class2 test-class3)']);
+      expect(addClass.callCount).toBe(1);
+      expect(removeClass.callCount).toBe(0);
+    }));
+
+
+    it('should defer class manipulation until postDigest when outside of digest', inject(function($rootScope, $animate, log) {
+      setupClassManipulationLogger(log);
+      element = jqLite('<p class="test-class4">test</p>');
+
+      $animate.addClass(element, 'test-class1');
+      $animate.removeClass(element, 'test-class1');
+      $animate.addClass(element, 'test-class2');
+      $animate.setClass(element, 'test-class3', 'test-class4');
+
+      expect(log).toEqual([]);
+      $rootScope.$digest();
+
+      expect(log).toEqual(['addClass(test-class2 test-class3)', 'removeClass(test-class4)']);
+      expect(element).not.toHaveClass('test-class1');
+      expect(element).toHaveClass('test-class2');
+      expect(element).toHaveClass('test-class3');
+      expect(addClass.callCount).toBe(1);
+      expect(removeClass.callCount).toBe(1);
+    }));
+
+
+    it('should perform class manipulation in expected order at end of digest', inject(function($rootScope, $animate, log) {
+      element = jqLite('<p class="test-class3">test</p>');
+
+      setupClassManipulationLogger(log);
+
+      $rootScope.$apply(function() {
+        $animate.addClass(element, 'test-class1');
+        $animate.addClass(element, 'test-class2');
+        $animate.removeClass(element, 'test-class1');
+        $animate.removeClass(element, 'test-class3');
+        $animate.addClass(element, 'test-class3');
+      });
+      expect(log).toEqual(['addClass(test-class2)']);
+    }));
+
+
+    it('should return a promise which is resolved on a different turn', inject(function(log, $animate, $browser, $rootScope) {
+      element = jqLite('<p class="test2">test</p>');
+
+      $animate.addClass(element, 'test1').then(log.fn('addClass(test1)'));
+      $animate.removeClass(element, 'test2').then(log.fn('removeClass(test2)'));
+
+      $rootScope.$digest();
+      expect(log).toEqual([]);
+      $browser.defer.flush();
+      expect(log).toEqual(['addClass(test1)', 'removeClass(test2)']);
+
+      log.reset();
+      element = jqLite('<p class="test4">test</p>');
+
+      $rootScope.$apply(function() {
+        $animate.addClass(element, 'test3').then(log.fn('addClass(test3)'));
+        $animate.removeClass(element, 'test4').then(log.fn('removeClass(test4)'));
+        expect(log).toEqual([]);
+      });
+
+      $browser.defer.flush();
+      expect(log).toEqual(['addClass(test3)', 'removeClass(test4)']);
+    }));
+
+
+    it('should defer class manipulation until end of digest for SVG', inject(function($rootScope, $animate) {
+      if (!window.SVGElement) return;
+      setupClassManipulationSpies();
+      element = jqLite('<svg><g></g></svg>');
+      var target = element.children().eq(0);
+
+      $rootScope.$apply(function() {
+        $animate.addClass(target, 'test-class1');
+        expect(target).not.toHaveClass('test-class1');
+
+        $animate.removeClass(target, 'test-class1');
+
+        $animate.addClass(target, 'test-class2');
+        expect(target).not.toHaveClass('test-class2');
+
+        $animate.setClass(target, 'test-class3', 'test-class4');
+        expect(target).not.toHaveClass('test-class3');
+        expect(target).not.toHaveClass('test-class4');
+      });
+
+      expect(target).not.toHaveClass('test-class1');
+      expect(target).toHaveClass('test-class2');
+      expect(addClass.callCount).toBe(1);
+      expect(removeClass.callCount).toBe(0);
+    }));
+
+
+    it('should defer class manipulation until postDigest when outside of digest for SVG', inject(function($rootScope, $animate, log) {
+      if (!window.SVGElement) return;
+      setupClassManipulationLogger(log);
+      element = jqLite('<svg><g class="test-class4"></g></svg>');
+      var target = element.children().eq(0);
+
+      $animate.addClass(target, 'test-class1');
+      $animate.removeClass(target, 'test-class1');
+      $animate.addClass(target, 'test-class2');
+      $animate.setClass(target, 'test-class3', 'test-class4');
+
+      expect(log).toEqual([]);
+      $rootScope.$digest();
+
+      expect(log).toEqual(['addClass(test-class2 test-class3)', 'removeClass(test-class4)']);
+      expect(target).not.toHaveClass('test-class1');
+      expect(target).toHaveClass('test-class2');
+      expect(target).toHaveClass('test-class3');
+      expect(addClass.callCount).toBe(1);
+      expect(removeClass.callCount).toBe(1);
+    }));
+
+
+    it('should perform class manipulation in expected order at end of digest for SVG', inject(function($rootScope, $animate, log) {
+      if (!window.SVGElement) return;
+      element = jqLite('<svg><g class="test-class3"></g></svg>');
+      var target = element.children().eq(0);
+
+      setupClassManipulationLogger(log);
+
+      $rootScope.$apply(function() {
+        $animate.addClass(target, 'test-class1');
+        $animate.addClass(target, 'test-class2');
+        $animate.removeClass(target, 'test-class1');
+        $animate.removeClass(target, 'test-class3');
+        $animate.addClass(target, 'test-class3');
+      });
+      expect(log).toEqual(['addClass(test-class2)']);
+    }));
   });
 });

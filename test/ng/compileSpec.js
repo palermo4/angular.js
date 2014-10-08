@@ -300,7 +300,7 @@ describe('$compile', function() {
       });
       inject(function($compile, $rootScope, $httpBackend) {
         $httpBackend.expect('GET', 'template.html').respond('<circle></circle>');
-        element = $compile('<svg><svg-circle-url ng-repeat="l in list"/></svg>')($rootScope);
+        element = $compile('<svg><g ng-repeat="l in list"><svg-circle-url></svg-circle-url></g></svg>')($rootScope);
 
         // initially the template is not yet loaded
         $rootScope.$apply(function() {
@@ -389,7 +389,6 @@ describe('$compile', function() {
       // it turns out that when a browser plugin is bound to an DOM element (typically <object>),
       // the plugin's context rather than the usual DOM apis are exposed on this element, so
       // childNodes might not exist.
-      if (msie < 9) return;
 
       element = jqLite('<div>{{1+2}}</div>');
 
@@ -1078,6 +1077,22 @@ describe('$compile', function() {
             });
           });
         }
+
+        it('should ignore comment nodes when replacing with a template', function() {
+          module(function() {
+            directive('replaceWithComments', valueFn({
+              replace: true,
+              template: '<!-- ignored comment --><p>Hello, world!</p><!-- ignored comment-->'
+            }));
+          });
+          inject(function($compile, $rootScope) {
+            expect(function() {
+              element = $compile('<div><div replace-with-comments></div></div>')($rootScope);
+            }).not.toThrow();
+            expect(element.find('p').length).toBe(1);
+            expect(element.find('p').text()).toBe('Hello, world!');
+          });
+        });
       });
 
 
@@ -1977,6 +1992,26 @@ describe('$compile', function() {
             });
           });
         }
+
+        it('should ignore comment nodes when replacing with a templateUrl', function() {
+          module(function() {
+            directive('replaceWithComments', valueFn({
+              replace: true,
+              templateUrl: 'templateWithComments.html'
+            }));
+          });
+          inject(function($compile, $rootScope, $httpBackend) {
+            $httpBackend.whenGET('templateWithComments.html').
+              respond('<!-- ignored comment --><p>Hello, world!</p><!-- ignored comment-->');
+            expect(function() {
+              element = $compile('<div><div replace-with-comments></div></div>')($rootScope);
+            }).not.toThrow();
+            $httpBackend.flush();
+            expect(element.find('p').length).toBe(1);
+            expect(element.find('p').text()).toBe('Hello, world!');
+          });
+        });
+
       });
 
 
@@ -2512,6 +2547,24 @@ describe('$compile', function() {
       });
     });
 
+    it('should allow the attribute to be removed before the attribute interpolation', function () {
+       module(function() {
+         directive('removeAttr', function () {
+           return {
+             restrict:'A',
+             compile: function (tElement, tAttr) {
+               tAttr.$set('removeAttr', null);
+             }
+           };
+         });
+       });
+       inject(function ($rootScope, $compile) {
+         expect(function () {
+           element = $compile('<div remove-attr="{{ toBeRemoved }}"></div>')($rootScope);
+         }).not.toThrow();
+         expect(element.attr('remove-attr')).toBeUndefined();
+       });
+     });
 
     describe('SCE values', function() {
       it('should resolve compile and link both attribute and text bindings', inject(

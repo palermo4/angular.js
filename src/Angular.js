@@ -6,6 +6,7 @@
   jqLite: true,
   jQuery: true,
   slice: true,
+  splice: true,
   push: true,
   toString: true,
   ngMinErr: true,
@@ -82,6 +83,12 @@
   getBlockNodes: true,
   hasOwnProperty: true,
   createMap: true,
+
+  NODE_TYPE_ELEMENT: true,
+  NODE_TYPE_TEXT: true,
+  NODE_TYPE_COMMENT: true,
+  NODE_TYPE_DOCUMENT: true,
+  NODE_TYPE_DOCUMENT_FRAGMENT: true,
 */
 
 ////////////////////////////////////
@@ -161,6 +168,7 @@ var /** holds major version number for IE or NaN for real browsers */
     jqLite,           // delay binding since jQuery could be loaded after us.
     jQuery,           // delay binding
     slice             = [].slice,
+    splice            = [].splice,
     push              = [].push,
     toString          = Object.prototype.toString,
     ngMinErr          = minErr('ng'),
@@ -171,13 +179,10 @@ var /** holds major version number for IE or NaN for real browsers */
     uid               = 0;
 
 /**
- * IE 11 changed the format of the UserAgent string.
- * See http://msdn.microsoft.com/en-us/library/ms537503.aspx
+ * documentMode is an IE-only property
+ * http://msdn.microsoft.com/en-us/library/ie/cc196988(v=vs.85).aspx
  */
-msie = int((/msie (\d+)/.exec(lowercase(navigator.userAgent)) || [])[1]);
-if (isNaN(msie)) {
-  msie = int((/trident\/.*; rv:(\d+)/.exec(lowercase(navigator.userAgent)) || [])[1]);
-}
+msie = document.documentMode;
 
 
 /**
@@ -193,7 +198,7 @@ function isArrayLike(obj) {
 
   var length = obj.length;
 
-  if (obj.nodeType === 1 && length) {
+  if (obj.nodeType === NODE_TYPE_ELEMENT && length) {
     return true;
   }
 
@@ -1029,11 +1034,9 @@ function startingTag(element) {
     // are not allowed to have children. So we just ignore it.
     element.empty();
   } catch(e) {}
-  // As Per DOM Standards
-  var TEXT_NODE = 3;
   var elemHtml = jqLite('<div>').append(element).html();
   try {
-    return element[0].nodeType === TEXT_NODE ? lowercase(elemHtml) :
+    return element[0].nodeType === NODE_TYPE_TEXT ? lowercase(elemHtml) :
         elemHtml.
           match(/^(<[^>]+>)/)[1].
           replace(/^<([\w\-]+)/, function(match, nodeName) { return '<' + lowercase(nodeName); });
@@ -1611,3 +1614,9 @@ function getBlockNodes(nodes) {
 function createMap() {
   return Object.create(null);
 }
+
+var NODE_TYPE_ELEMENT = 1;
+var NODE_TYPE_TEXT = 3;
+var NODE_TYPE_COMMENT = 8;
+var NODE_TYPE_DOCUMENT = 9;
+var NODE_TYPE_DOCUMENT_FRAGMENT = 11;

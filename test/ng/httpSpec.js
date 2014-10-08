@@ -343,7 +343,6 @@ describe('$http', function() {
       });
 
       it('should not double quote dates', function() {
-        if (msie < 9) return;
         $httpBackend.expect('GET', '/url?date=2014-07-15T17:30:00.000Z').respond('');
         $http({url: '/url', params: {date:new Date('2014-07-15T17:30:00.000Z')}, method: 'GET'});
       });
@@ -1017,6 +1016,61 @@ describe('$http', function() {
 
             expect(callback).toHaveBeenCalledOnce();
             expect(callback.mostRecentCall.args[0]).toEqual([1, 'abc', {foo: 'bar'}]);
+          });
+
+
+          it('should deserialize json numbers when response header contains application/json',
+              function() {
+            $httpBackend.expect('GET', '/url').respond('123', {'Content-Type': 'application/json'});
+            $http({method: 'GET', url: '/url'}).success(callback);
+            $httpBackend.flush();
+
+            expect(callback).toHaveBeenCalledOnce();
+            expect(callback.mostRecentCall.args[0]).toEqual(123);
+          });
+
+
+          it('should deserialize json strings when response header contains application/json',
+              function() {
+            $httpBackend.expect('GET', '/url').respond('"asdf"', {'Content-Type': 'application/json'});
+            $http({method: 'GET', url: '/url'}).success(callback);
+            $httpBackend.flush();
+
+            expect(callback).toHaveBeenCalledOnce();
+            expect(callback.mostRecentCall.args[0]).toEqual('asdf');
+          });
+
+
+          it('should deserialize json nulls when response header contains application/json',
+              function() {
+            $httpBackend.expect('GET', '/url').respond('null', {'Content-Type': 'application/json'});
+            $http({method: 'GET', url: '/url'}).success(callback);
+            $httpBackend.flush();
+
+            expect(callback).toHaveBeenCalledOnce();
+            expect(callback.mostRecentCall.args[0]).toEqual(null);
+          });
+
+
+          it('should deserialize json true when response header contains application/json',
+              function() {
+            $httpBackend.expect('GET', '/url').respond('true', {'Content-Type': 'application/json'});
+            $http({method: 'GET', url: '/url'}).success(callback);
+            $httpBackend.flush();
+
+            expect(callback).toHaveBeenCalledOnce();
+            expect(callback.mostRecentCall.args[0]).toEqual(true);
+          });
+
+
+          it('should deserialize json false when response header contains application/json',
+              function() {
+            $httpBackend.expect('GET', '/url').respond('false', {'Content-Type': 'application/json'});
+            $http({method: 'GET', url: '/url'}).success(callback);
+            $httpBackend.flush();
+
+            expect(callback).toHaveBeenCalledOnce();
+            expect(callback.mostRecentCall.args[0]).toEqual(false);
           });
 
 

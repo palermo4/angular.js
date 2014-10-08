@@ -7,13 +7,13 @@
  * @kind function
  *
  * @description
- * Creates an injector function that can be used for retrieving services as well as for
+ * Creates an injector object that can be used for retrieving services as well as for
  * dependency injection (see {@link guide/di dependency injection}).
  *
 
  * @param {Array.<string|Function>} modules A list of module functions or their aliases. See
  *        {@link angular.module}. The `ng` module must be explicitly added.
- * @returns {function()} Injector function. See {@link auto.$injector $injector}.
+ * @returns {function()} Injector object. See {@link auto.$injector $injector}.
  *
  * @example
  * Typical usage
@@ -120,7 +120,6 @@ function annotate(fn, strictDi, name) {
 /**
  * @ngdoc service
  * @name $injector
- * @kind function
  *
  * @description
  *
@@ -135,7 +134,7 @@ function annotate(fn, strictDi, name) {
  *   expect($injector.get('$injector')).toBe($injector);
  *   expect($injector.invoke(function($injector) {
  *     return $injector;
- *   }).toBe($injector);
+ *   })).toBe($injector);
  * ```
  *
  * # Injection Function Annotation
@@ -202,8 +201,8 @@ function annotate(fn, strictDi, name) {
  * @description
  * Allows the user to query if the particular service exists.
  *
- * @param {string} Name of the service to query.
- * @returns {boolean} returns true if injector has given service.
+ * @param {string} name Name of the service to query.
+ * @returns {boolean} `true` if injector has given service.
  */
 
 /**

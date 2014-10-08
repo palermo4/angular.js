@@ -90,7 +90,7 @@ describe('$location', function() {
         };
       };
       $browserProvider.$get = function($document, $window) {
-        var sniffer = {history: true, hashchange: false};
+        var sniffer = {history: true};
         var logs = {log:[], warn:[], info:[], error:[]};
         var fakeLog = {log: function() { logs.log.push(slice.call(arguments)); },
                    warn: function() { logs.warn.push(slice.call(arguments)); },
@@ -385,6 +385,36 @@ describe('$location', function() {
       expect(function() {
         url.$$parse('http://server.org/path#/path');
       }).toThrowMinErr('$location', 'ipthprfx', 'Invalid url "http://server.org/path#/path", missing path prefix "http://server.org/base/".');
+    });
+
+
+    describe('state', function () {
+      it('should set $$state and return itself', function() {
+        expect(url.$$state).toEqual(null);
+
+        var returned = url.state({a: 2});
+        expect(url.$$state).toEqual({a: 2});
+        expect(returned).toBe(url);
+      });
+
+      it('should set state', function () {
+        url.state({a: 2});
+        expect(url.state()).toEqual({a: 2});
+      });
+
+      it('should allow to set both URL and state', function() {
+        url.url('/foo').state({a: 2});
+        expect(url.url()).toEqual('/foo');
+        expect(url.state()).toEqual({a: 2});
+      });
+
+      it('should allow to mix state and various URL functions', function() {
+        url.path('/foo').hash('abcd').state({a: 2}).search('bar', 'baz');
+        expect(url.path()).toEqual('/foo');
+        expect(url.state()).toEqual({a: 2});
+        expect(url.search() && url.search().bar).toBe('baz');
+        expect(url.hash()).toEqual('abcd');
+      });
     });
 
 
@@ -684,7 +714,7 @@ describe('$location', function() {
       $rootScope.$apply();
 
       expect($browserUrl).toHaveBeenCalledOnce();
-      expect($browserUrl.mostRecentCall.args).toEqual(['http://new.com/a/b#!/n/url', true]);
+      expect($browserUrl.mostRecentCall.args).toEqual(['http://new.com/a/b#!/n/url', true, null]);
       expect($location.$$replace).toBe(false);
     }));
 
@@ -719,6 +749,122 @@ describe('$location', function() {
       $rootScope.$digest();
       expect($browser.url()).toBe('http://new.com/a/b#!/changed');
     }));
+  });
+
+  describe('wiring in html5 mode', function() {
+
+    beforeEach(initService({html5Mode: true, supportHistory: true}));
+    beforeEach(inject(initBrowser({url:'http://new.com/a/b/', basePath: '/a/b/'})));
+
+    it('should initialize state to $browser.state()', inject(function($browser) {
+      $browser.$$state = {a: 2};
+      inject(function($location) {
+        expect($location.state()).toEqual({a: 2});
+      });
+    }));
+
+    it('should update $location when browser state changes', inject(function($browser, $location) {
+      $browser.url('http://new.com/a/b/', false, {b: 3});
+      $browser.poll();
+      expect($location.state()).toEqual({b: 3});
+    }));
+
+    it('should replace browser url & state when replace() was called at least once',
+      inject(function($rootScope, $location, $browser) {
+        var $browserUrl = spyOnlyCallsWithArgs($browser, 'url').andCallThrough();
+        $location.path('/n/url').state({a: 2}).replace();
+        $rootScope.$apply();
+
+        expect($browserUrl).toHaveBeenCalledOnce();
+        expect($browserUrl.mostRecentCall.args).toEqual(['http://new.com/a/b/n/url', true, {a: 2}]);
+        expect($location.$$replace).toBe(false);
+        expect($location.$$state).toEqual({a: 2});
+      }));
+
+    it('should use only the most recent url & state definition',
+      inject(function($rootScope, $location, $browser) {
+        var $browserUrl = spyOnlyCallsWithArgs($browser, 'url').andCallThrough();
+        $location.path('/n/url').state({a: 2}).replace().state({b: 3}).path('/o/url');
+        $rootScope.$apply();
+
+        expect($browserUrl).toHaveBeenCalledOnce();
+        expect($browserUrl.mostRecentCall.args).toEqual(['http://new.com/a/b/o/url', true, {b: 3}]);
+        expect($location.$$replace).toBe(false);
+        expect($location.$$state).toEqual({b: 3});
+      }));
+
+    it('should allow to set state without touching the URL',
+      inject(function($rootScope, $location, $browser) {
+        var $browserUrl = spyOnlyCallsWithArgs($browser, 'url').andCallThrough();
+        $location.state({a: 2}).replace().state({b: 3});
+        $rootScope.$apply();
+
+        expect($browserUrl).toHaveBeenCalledOnce();
+        expect($browserUrl.mostRecentCall.args).toEqual(['http://new.com/a/b/', true, {b: 3}]);
+        expect($location.$$replace).toBe(false);
+        expect($location.$$state).toEqual({b: 3});
+      }));
+
+    it('should always reset replace flag after running watch', inject(function($rootScope, $location) {
+      // init watches
+      $location.url('/initUrl').state({a: 2});
+      $rootScope.$apply();
+
+      // changes url & state but resets them before digest
+      $location.url('/newUrl').state({a: 2}).replace().state({b: 3}).url('/initUrl');
+      $rootScope.$apply();
+      expect($location.$$replace).toBe(false);
+
+      // set the url to the old value
+      $location.url('/newUrl').state({a: 2}).replace();
+      $rootScope.$apply();
+      expect($location.$$replace).toBe(false);
+
+      // doesn't even change url only calls replace()
+      $location.replace();
+      $rootScope.$apply();
+      expect($location.$$replace).toBe(false);
+    }));
+
+    it('should allow to modify state only before digest',
+      inject(function($rootScope, $location, $browser) {
+        var o = {a: 2};
+        $location.state(o);
+        o.a = 3;
+        $rootScope.$apply();
+        expect($browser.state()).toEqual({a: 3});
+
+        o.a = 4;
+        $rootScope.$apply();
+        expect($browser.state()).toEqual({a: 3});
+      }));
+
+    it('should make $location.state() referencially identical with $browser.state() after digest',
+      inject(function($rootScope, $location, $browser) {
+        $location.state({a: 2});
+        $rootScope.$apply();
+        expect($location.state()).toBe($browser.state());
+      }));
+
+    it('should allow to query the state after digest',
+      inject(function($rootScope, $location) {
+        $location.url('/foo').state({a: 2});
+        $rootScope.$apply();
+        expect($location.state()).toEqual({a: 2});
+      }));
+
+    it('should reset the state on .url() after digest',
+      inject(function($rootScope, $location, $browser) {
+        $location.url('/foo').state({a: 2});
+        $rootScope.$apply();
+
+        var $browserUrl = spyOnlyCallsWithArgs($browser, 'url').andCallThrough();
+        $location.url('/bar');
+        $rootScope.$apply();
+
+        expect($browserUrl).toHaveBeenCalledOnce();
+        expect($browserUrl.mostRecentCall.args).toEqual(['http://new.com/a/b/bar', false, null]);
+      }));
   });
 
 
@@ -1133,6 +1279,19 @@ describe('$location', function() {
     });
 
 
+    it ('should not rewrite links when rewriting links is disabled', function() {
+      configureService('/a?b=c', true, true, '', 'some content', false);
+      inject(
+        initBrowser(),
+        initLocation(),
+        function($browser) {
+          browserTrigger(link, 'click');
+          expectNoRewrite($browser);
+        }
+      );
+    });
+
+
     it('should rewrite full url links to same domain and base path', function() {
       configureService({linkHref: 'http://host.com/base/new', html5Mode: true});
       inject(
@@ -1276,34 +1435,30 @@ describe('$location', function() {
       );
     });
 
-    // don't run next tests on IE<9, as browserTrigger does not simulate pressed keys
-    if (!msie || msie >= 9) {
-
-      it('should not rewrite when clicked with ctrl pressed', function() {
-        configureService({linkHref: '/a?b=c', html5Mode: true, supportHist: true});
-        inject(
-          initBrowser(),
-          initLocation(),
-          function($browser) {
-            browserTrigger(link, 'click', { keys: ['ctrl'] });
-            expectNoRewrite($browser);
-          }
-        );
-      });
+    it('should not rewrite when clicked with ctrl pressed', function() {
+      configureService({linkHref: '/a?b=c', html5Mode: true, supportHist: true});
+      inject(
+        initBrowser(),
+        initLocation(),
+        function($browser) {
+          browserTrigger(link, 'click', { keys: ['ctrl'] });
+          expectNoRewrite($browser);
+        }
+      );
+    });
 
 
-      it('should not rewrite when clicked with meta pressed', function() {
-        configureService({linkHref: '/a?b=c', html5Mode: true, supportHist: true});
-        inject(
-          initBrowser(),
-          initLocation(),
-          function($browser) {
-            browserTrigger(link, 'click', { keys: ['meta'] });
-            expectNoRewrite($browser);
-          }
-        );
-      });
-    }
+    it('should not rewrite when clicked with meta pressed', function() {
+      configureService({linkHref: '/a?b=c', html5Mode: true, supportHist: true});
+      inject(
+        initBrowser(),
+        initLocation(),
+        function($browser) {
+          browserTrigger(link, 'click', { keys: ['meta'] });
+          expectNoRewrite($browser);
+        }
+      );
+    });
 
 
     it('should not mess up hash urls when clicking on links in hashbang mode', function() {
@@ -1651,11 +1806,13 @@ describe('$location', function() {
 
 
   describe('html5Mode', function() {
-    it('should set enabled and requireBase when called with object', function() {
+    it('should set enabled,  requireBase and rewriteLinks when called with object', function() {
       module(function($locationProvider) {
+        $locationProvider.html5Mode({enabled: true, requireBase: false, rewriteLinks: false});
         expect($locationProvider.html5Mode()).toEqual({
-          enabled: false,
-          requireBase: true
+          enabled: true,
+          requireBase: false,
+          rewriteLinks: false
         });
       });
 
@@ -1667,12 +1824,14 @@ describe('$location', function() {
       module(function($locationProvider) {
         $locationProvider.html5Mode({
           enabled: 'duh',
-          requireBase: 'probably'
+          requireBase: 'probably',
+          rewriteLinks: 'nope'
         });
 
         expect($locationProvider.html5Mode()).toEqual({
           enabled: false,
-          requireBase: true
+          requireBase: true,
+          rewriteLinks: true
         });
       });
 
@@ -1688,7 +1847,8 @@ describe('$location', function() {
 
         expect($locationProvider.html5Mode()).toEqual({
           enabled: false,
-          requireBase: true
+          requireBase: true,
+          rewriteLinks: true
         });
       });
 
@@ -1696,23 +1856,12 @@ describe('$location', function() {
     });
 
 
-    it('should default to enabled:false and requireBase:true', function() {
+    it('should default to enabled:false, requireBase:true and rewriteLinks:true', function() {
       module(function($locationProvider) {
         expect($locationProvider.html5Mode()).toEqual({
           enabled: false,
-          requireBase: true
-        });
-      });
-
-      inject(function(){});
-    });
-
-
-    it('should return html5Mode object when called without value', function() {
-      module(function($locationProvider) {
-        expect($locationProvider.html5Mode()).toEqual({
-          enabled: false,
-          requireBase: true
+          requireBase: true,
+          rewriteLinks: true
         });
       });
 
@@ -1775,8 +1924,20 @@ describe('$location', function() {
           "$location in HTML5 mode requires a <base> tag to be present!");
       });
     });
+
+    it('should support state', function() {
+      expect(location.state({a: 2}).state()).toEqual({a: 2});
+    });
   });
 
+
+  function throwOnState(location) {
+    expect(function () {
+      location.state({a: 2});
+    }).toThrowMinErr('$location', 'nostate', 'History API state support is available only ' +
+      'in HTML5 mode and only in browsers supporting HTML5 History API'
+    );
+  }
 
   describe('LocationHashbangUrl', function() {
     var location;
@@ -1832,6 +1993,10 @@ describe('$location', function() {
       expect(location.url()).toBe('/http://example.com/');
       expect(location.absUrl()).toBe('http://server/pre/index.html#/http://example.com/');
     });
+
+    it('should throw on url(urlString, stateObject)', function () {
+      throwOnState(location);
+    });
   });
 
 
@@ -1857,6 +2022,10 @@ describe('$location', function() {
       expect(parseLinkAndReturn(locationIndex, 'http://server/pre/otherPath')).toEqual('http://server/pre/index.html#!/otherPath');
       // Note: relies on the previous state!
       expect(parseLinkAndReturn(locationIndex, 'someIgnoredAbsoluteHref', '#test')).toEqual('http://server/pre/index.html#!/otherPath#test');
+    });
+
+    it('should throw on url(urlString, stateObject)', function () {
+      throwOnState(location);
     });
   });
 });

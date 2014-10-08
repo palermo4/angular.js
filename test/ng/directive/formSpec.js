@@ -257,17 +257,13 @@ describe('form', function() {
         reloadPrevented = e.defaultPrevented || (e.returnValue === false);
       };
 
-      // native dom event listeners in IE8 fire in LIFO order so we have to register them
-      // there in different order than in other browsers
-      if (msie==8) addEventListenerFn(doc[0], 'submit', assertPreventDefaultListener);
-
       $compile(doc)(scope);
 
       scope.submitMe = function() {
         submitted = true;
       };
 
-      if (msie!=8) addEventListenerFn(doc[0], 'submit', assertPreventDefaultListener);
+      addEventListenerFn(doc[0], 'submit', assertPreventDefaultListener);
 
       browserTrigger(doc.find('input'));
 
@@ -316,13 +312,9 @@ describe('form', function() {
         reloadPrevented = e.defaultPrevented || (e.returnValue === false);
       };
 
-      // native dom event listeners in IE8 fire in LIFO order so we have to register them
-      // there in different order than in other browsers
-      if (msie == 8) addEventListenerFn(form[0], 'submit', assertPreventDefaultListener);
-
       $compile(doc)(scope);
 
-      if (msie != 8) addEventListenerFn(form[0], 'submit', assertPreventDefaultListener);
+      addEventListenerFn(form[0], 'submit', assertPreventDefaultListener);
 
       browserTrigger(doc.find('button'), 'click');
 
@@ -330,11 +322,6 @@ describe('form', function() {
       setTimeout(function() { nextTurn = true;}, 100);
 
       waitsFor(function() { return nextTurn; });
-
-
-      // I can't get IE8 to automatically trigger submit in this test, in production it does it
-      // properly
-      if (msie == 8) browserTrigger(form, 'submit');
 
       runs(function() {
         expect(doc.html()).toBe('');
@@ -344,12 +331,6 @@ describe('form', function() {
                                        // the event propagates there. we can fix this if we see
                                        // the issue in the wild, I'm not going to bother to do it
                                        // now. (i)
-
-        // IE9 and IE10 are special and don't fire submit event when form was destroyed
-        if (msie < 9) {
-          expect(reloadPrevented).toBe(true);
-          $timeout.flush();
-        }
 
         // prevent mem leak in test
         removeEventListenerFn(form[0], 'submit', assertPreventDefaultListener);
@@ -573,17 +554,20 @@ describe('form', function() {
       expect(doc).toBeValid();
 
       control.$setValidity('error', false);
+      scope.$digest();
       expect(doc).toBeInvalid();
       expect(doc.hasClass('ng-valid-error')).toBe(false);
       expect(doc.hasClass('ng-invalid-error')).toBe(true);
 
       control.$setValidity('another', false);
+      scope.$digest();
       expect(doc.hasClass('ng-valid-error')).toBe(false);
       expect(doc.hasClass('ng-invalid-error')).toBe(true);
       expect(doc.hasClass('ng-valid-another')).toBe(false);
       expect(doc.hasClass('ng-invalid-another')).toBe(true);
 
       control.$setValidity('error', true);
+      scope.$digest();
       expect(doc).toBeInvalid();
       expect(doc.hasClass('ng-valid-error')).toBe(true);
       expect(doc.hasClass('ng-invalid-error')).toBe(false);
@@ -591,6 +575,7 @@ describe('form', function() {
       expect(doc.hasClass('ng-invalid-another')).toBe(true);
 
       control.$setValidity('another', true);
+      scope.$digest();
       expect(doc).toBeValid();
       expect(doc.hasClass('ng-valid-error')).toBe(true);
       expect(doc.hasClass('ng-invalid-error')).toBe(false);
@@ -600,6 +585,7 @@ describe('form', function() {
       // validators are skipped, e.g. becuase of a parser error
       control.$setValidity('error', null);
       control.$setValidity('another', null);
+      scope.$digest();
       expect(doc.hasClass('ng-valid-error')).toBe(false);
       expect(doc.hasClass('ng-invalid-error')).toBe(false);
       expect(doc.hasClass('ng-valid-another')).toBe(false);
@@ -671,7 +657,9 @@ describe('form', function() {
       expect(input1).toBeDirty();
       expect(input2).toBeDirty();
 
+
       formCtrl.$setPristine();
+      scope.$digest();
       expect(form).toBePristine();
       expect(formCtrl.$pristine).toBe(true);
       expect(formCtrl.$dirty).toBe(false);
@@ -704,6 +692,7 @@ describe('form', function() {
       expect(input).toBeDirty();
 
       formCtrl.$setPristine();
+      scope.$digest();
       expect(form).toBePristine();
       expect(formCtrl.$pristine).toBe(true);
       expect(formCtrl.$dirty).toBe(false);
@@ -738,7 +727,9 @@ describe('form', function() {
       expect(nestedInput).toBeDirty();
 
       formCtrl.$setPristine();
+      scope.$digest();
       expect(form).toBePristine();
+      scope.$digest();
       expect(formCtrl.$pristine).toBe(true);
       expect(formCtrl.$dirty).toBe(false);
       expect(nestedForm).toBePristine();

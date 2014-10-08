@@ -1,4 +1,5 @@
 'use strict';
+/* global stripHash: true */
 
 /**
  * ! This is a private undocumented service !
@@ -123,8 +124,9 @@ function Browser(window, document, $log, $sniffer) {
   //////////////////////////////////////////////////////////////
 
   var lastBrowserUrl = location.href,
+      lastHistoryState = history.state,
       baseElement = document.find('base'),
-      newLocation = null;
+      reloadLocation = null;
 
   /**
    * @name $browser#url
@@ -143,24 +145,42 @@ function Browser(window, document, $log, $sniffer) {
    * {@link ng.$location $location service} to change url.
    *
    * @param {string} url New url (when used as setter)
-   * @param {boolean=} replace Should new url replace current history record ?
+   * @param {boolean=} replace Should new url replace current history record?
+   * @param {object=} state object to use with pushState/replaceState
    */
-  self.url = function(url, replace) {
+  self.url = function(url, replace, state) {
+    // In modern browsers `history.state` is `null` by default; treating it separately
+    // from `undefined` would cause `$browser.url('/foo')` to change `history.state`
+    // to undefined via `pushState`. Instead, let's change `undefined` to `null` here.
+    if (isUndefined(state)) {
+      state = null;
+    }
+
     // Android Browser BFCache causes location, history reference to become stale.
     if (location !== window.location) location = window.location;
     if (history !== window.history) history = window.history;
 
     // setter
     if (url) {
-      if (lastBrowserUrl == url) return;
+      // Don't change anything if previous and current URLs and states match. This also prevents
+      // IE<10 from getting into redirect loop when in LocationHashbangInHtml5Url mode.
+      // See https://github.com/angular/angular.js/commit/ffb2701
+      if (lastBrowserUrl === url && (!$sniffer.history || history.state === state)) {
+        return;
+      }
+      var sameBase = lastBrowserUrl && stripHash(lastBrowserUrl) === stripHash(url);
       lastBrowserUrl = url;
-      if ($sniffer.history) {
-        if (replace) history.replaceState(null, '', url);
-        else {
-          history.pushState(null, '', url);
-        }
+      // Don't use history API if only the hash changed
+      // due to a bug in IE10/IE11 which leads
+      // to not firing a `hashchange` nor `popstate` event
+      // in some cases (see #9143).
+      if ($sniffer.history && (!sameBase || history.state !== state)) {
+        history[replace ? 'replaceState' : 'pushState'](state, '', url);
+        lastHistoryState = history.state;
       } else {
-        newLocation = url;
+        if (!sameBase) {
+          reloadLocation = url;
+        }
         if (replace) {
           location.replace(url);
         } else {
@@ -170,27 +190,38 @@ function Browser(window, document, $log, $sniffer) {
       return self;
     // getter
     } else {
-      // - newLocation is a workaround for an IE7-9 issue with location.replace and location.href
-      //   methods not updating location.href synchronously.
+      // - reloadLocation is needed as browsers don't allow to read out
+      //   the new location.href if a reload happened.
       // - the replacement is a workaround for https://bugzilla.mozilla.org/show_bug.cgi?id=407172
-      return newLocation || location.href.replace(/%27/g,"'");
+      return reloadLocation || location.href.replace(/%27/g,"'");
     }
+  };
+
+  /**
+   * @name $browser#state
+   *
+   * @description
+   * This method is a getter.
+   *
+   * Return history.state or null if history.state is undefined.
+   *
+   * @returns {object} state
+   */
+  self.state = function() {
+    return isUndefined(history.state) ? null : history.state;
   };
 
   var urlChangeListeners = [],
       urlChangeInit = false;
 
   function fireUrlChange() {
-    newLocation = null;
-    checkUrlChange();
-  }
-
-  function checkUrlChange() {
-    if (lastBrowserUrl == self.url()) return;
+    if (lastBrowserUrl === self.url() && lastHistoryState === history.state) {
+      return;
+    }
 
     lastBrowserUrl = self.url();
     forEach(urlChangeListeners, function(listener) {
-      listener(self.url());
+      listener(self.url(), history.state);
     });
   }
 
@@ -225,9 +256,7 @@ function Browser(window, document, $log, $sniffer) {
       // html5 history api - popstate event
       if ($sniffer.history) jqLite(window).on('popstate', fireUrlChange);
       // hashchange event
-      if ($sniffer.hashchange) jqLite(window).on('hashchange', fireUrlChange);
-      // polling
-      else self.addPollFn(fireUrlChange);
+      jqLite(window).on('hashchange', fireUrlChange);
 
       urlChangeInit = true;
     }
@@ -241,7 +270,7 @@ function Browser(window, document, $log, $sniffer) {
    * Needs to be exported to be able to check for changes that have been done in sync,
    * as hashchange/popstate events fire in async.
    */
-  self.$$checkUrlChange = checkUrlChange;
+  self.$$checkUrlChange = fireUrlChange;
 
   //////////////////////////////////////////////////////////////
   // Misc API

@@ -303,9 +303,7 @@ function LocationHashbangInHtml5Url(appBase, hashPrefix) {
 }
 
 
-LocationHashbangInHtml5Url.prototype =
-  LocationHashbangUrl.prototype =
-  LocationHtml5Url.prototype = {
+var locationPrototype = {
 
   /**
    * Are we in html5 mode?
@@ -314,7 +312,7 @@ LocationHashbangInHtml5Url.prototype =
   $$html5: false,
 
   /**
-   * Has any change been replacing ?
+   * Has any change been replacing?
    * @private
    */
   $$replace: false,
@@ -530,6 +528,46 @@ LocationHashbangInHtml5Url.prototype =
   }
 };
 
+forEach([LocationHashbangInHtml5Url, LocationHashbangUrl, LocationHtml5Url], function (Location) {
+  Location.prototype = Object.create(locationPrototype);
+
+  /**
+   * @ngdoc method
+   * @name $location#state
+   *
+   * @description
+   * This method is getter / setter.
+   *
+   * Return the history state object when called without any parameter.
+   *
+   * Change the history state object when called with one parameter and return `$location`.
+   * The state object is later passed to `pushState` or `replaceState`.
+   *
+   * NOTE: This method is supported only in HTML5 mode and only in browsers supporting
+   * the HTML5 History API (i.e. methods `pushState` and `replaceState`). If you need to support
+   * older browsers (like IE9 or Android < 4.0), don't use this method.
+   *
+   * @param {object=} state State object for pushState or replaceState
+   * @return {object} state
+   */
+  Location.prototype.state = function(state) {
+    if (!arguments.length)
+      return this.$$state;
+
+    if (Location !== LocationHtml5Url || !this.$$html5) {
+      throw $locationMinErr('nostate', 'History API state support is available only ' +
+        'in HTML5 mode and only in browsers supporting HTML5 History API');
+    }
+    // The user might modify `stateObject` after invoking `$location.state(stateObject)`
+    // but we're changing the $$state reference to $browser.state() during the $digest
+    // so the modification window is narrow.
+    this.$$state = isUndefined(state) ? null : state;
+
+    return this;
+  };
+});
+
+
 function locationGetter(property) {
   return function() {
     return this[property];
@@ -586,7 +624,8 @@ function $LocationProvider(){
   var hashPrefix = '',
       html5Mode = {
         enabled: false,
-        requireBase: true
+        requireBase: true,
+        rewriteLinks: true
       };
 
   /**
@@ -610,15 +649,17 @@ function $LocationProvider(){
    * @name $locationProvider#html5Mode
    * @description
    * @param {(boolean|Object)=} mode If boolean, sets `html5Mode.enabled` to value.
-   *   If object, sets `enabled` and `requireBase` to respective values.
-   *   - **enabled** – `{boolean}` – Sets `html5Mode.enabled`. If true, will rely on
-   *     `history.pushState` to change urls where supported. Will fall back to hash-prefixed paths
-   *     in browsers that do not support `pushState`.
-   *   - **requireBase** - `{boolean}` - Sets `html5Mode.requireBase` (default: `true`). When
-   *     html5Mode is enabled, specifies whether or not a <base> tag is required to be present. If
-   *     `enabled` and `requireBase` are true, and a base tag is not present, an error will be
-   *     thrown when `$location` is injected. See the
-   *     {@link guide/$location $location guide for more information}
+   *   If object, sets `enabled`, `requireBase` and `rewriteLinks` to respective values. Supported
+   *   properties:
+   *   - **enabled** – `{boolean}` – (default: false) If true, will rely on `history.pushState` to
+   *     change urls where supported. Will fall back to hash-prefixed paths in browsers that do not
+   *     support `pushState`.
+   *   - **requireBase** - `{boolean}` - (default: `true`) When html5Mode is enabled, specifies
+   *     whether or not a <base> tag is required to be present. If `enabled` and `requireBase` are
+   *     true, and a base tag is not present, an error will be thrown when `$location` is injected.
+   *     See the {@link guide/$location $location guide for more information}
+   *   - **rewriteLinks** - `{boolean}` - (default: `false`) When html5Mode is enabled, disables
+   *     url rewriting for relative linksTurns off url rewriting for relative links.
    *
    * @returns {Object} html5Mode object if used as getter or itself (chaining) if used as setter
    */
@@ -627,12 +668,19 @@ function $LocationProvider(){
       html5Mode.enabled = mode;
       return this;
     } else if (isObject(mode)) {
-      html5Mode.enabled = isBoolean(mode.enabled) ?
-          mode.enabled :
-          html5Mode.enabled;
-      html5Mode.requireBase = isBoolean(mode.requireBase) ?
-          mode.requireBase :
-          html5Mode.requireBase;
+
+      if (isBoolean(mode.enabled)) {
+        html5Mode.enabled =  mode.enabled;
+      }
+
+      if (isBoolean(mode.requireBase)) {
+        html5Mode.requireBase = mode.requireBase;
+      }
+
+      if (isBoolean(mode.rewriteLinks)) {
+        html5Mode.rewriteLinks =  mode.rewriteLinks;
+      }
+
       return this;
     } else {
       return html5Mode;
@@ -649,9 +697,14 @@ function $LocationProvider(){
    * details about event object. Upon successful change
    * {@link ng.$location#events_$locationChangeSuccess $locationChangeSuccess} is fired.
    *
+   * The `newState` and `oldState` parameters may be defined only in HTML5 mode and when
+   * the browser supports the HTML5 History API.
+   *
    * @param {Object} angularEvent Synthetic event object.
    * @param {string} newUrl New URL
    * @param {string=} oldUrl URL that was before it was changed.
+   * @param {string=} newState New history state object
+   * @param {string=} oldState History state object that was before it was changed.
    */
 
   /**
@@ -661,9 +714,14 @@ function $LocationProvider(){
    * @description
    * Broadcasted after a URL was changed.
    *
+   * The `newState` and `oldState` parameters may be defined only in HTML5 mode and when
+   * the browser supports the HTML5 History API.
+   *
    * @param {Object} angularEvent Synthetic event object.
    * @param {string} newUrl New URL
    * @param {string=} oldUrl URL that was before it was changed.
+   * @param {string=} newState New history state object
+   * @param {string=} oldState History state object that was before it was changed.
    */
 
   this.$get = ['$rootScope', '$browser', '$sniffer', '$rootElement',
@@ -688,13 +746,34 @@ function $LocationProvider(){
     $location = new LocationMode(appBase, '#' + hashPrefix);
     $location.$$parseLinkUrl(initialUrl, initialUrl);
 
+    $location.$$state = $browser.state();
+
     var IGNORE_URI_REGEXP = /^\s*(javascript|mailto):/i;
+
+    function setBrowserUrlWithFallback(url, replace, state) {
+      var oldUrl = $location.url();
+      var oldState = $location.$$state;
+      try {
+        $browser.url(url, replace, state);
+
+        // Make sure $location.state() returns referentially identical (not just deeply equal)
+        // state object; this makes possible quick checking if the state changed in the digest
+        // loop. Checking deep equality would be too expensive.
+        $location.$$state = $browser.state();
+      } catch (e) {
+        // Restore old values if pushState fails
+        $location.url(oldUrl);
+        $location.$$state = oldState;
+
+        throw e;
+      }
+    }
 
     $rootElement.on('click', function(event) {
       // TODO(vojta): rewrite link when opening in new tab/window (in legacy browser)
       // currently we open nice url link and redirect then
 
-      if (event.ctrlKey || event.metaKey || event.which == 2) return;
+      if (!html5Mode.rewriteLinks || event.ctrlKey || event.metaKey || event.which == 2) return;
 
       var elm = jqLite(event.target);
 
@@ -720,6 +799,9 @@ function $LocationProvider(){
 
       if (absHref && !elm.attr('target') && !event.isDefaultPrevented()) {
         if ($location.$$parseLinkUrl(absHref, relHref)) {
+          // We do a preventDefault for all urls that are part of the angular application,
+          // in html5mode and also without, so that we are able to abort navigation without
+          // getting double entries in the location history.
           event.preventDefault();
           // update location manually
           if ($location.absUrl() != $browser.url()) {
@@ -737,52 +819,63 @@ function $LocationProvider(){
       $browser.url($location.absUrl(), true);
     }
 
-    // update $location when $browser url changes
-    $browser.onUrlChange(function(newUrl) {
-      if ($location.absUrl() != newUrl) {
-        $rootScope.$evalAsync(function() {
-          var oldUrl = $location.absUrl();
+    var initializing = true;
 
-          $location.$$parse(newUrl);
-          if ($rootScope.$broadcast('$locationChangeStart', newUrl,
-                                    oldUrl).defaultPrevented) {
-            $location.$$parse(oldUrl);
-            $browser.url(oldUrl);
-          } else {
-            afterLocationChange(oldUrl);
-          }
-        });
-        if (!$rootScope.$$phase) $rootScope.$digest();
-      }
+    // update $location when $browser url changes
+    $browser.onUrlChange(function(newUrl, newState) {
+      $rootScope.$evalAsync(function() {
+        var oldUrl = $location.absUrl();
+        var oldState = $location.$$state;
+
+        $location.$$parse(newUrl);
+        $location.$$state = newState;
+        if ($rootScope.$broadcast('$locationChangeStart', newUrl, oldUrl,
+            newState, oldState).defaultPrevented) {
+          $location.$$parse(oldUrl);
+          $location.$$state = oldState;
+          setBrowserUrlWithFallback(oldUrl, false, oldState);
+        } else {
+          initializing = false;
+          afterLocationChange(oldUrl, oldState);
+        }
+      });
+      if (!$rootScope.$$phase) $rootScope.$digest();
     });
 
     // update browser
-    var changeCounter = 0;
     $rootScope.$watch(function $locationWatch() {
       var oldUrl = $browser.url();
+      var oldState = $browser.state();
       var currentReplace = $location.$$replace;
 
-      if (!changeCounter || oldUrl != $location.absUrl()) {
-        changeCounter++;
+      if (initializing || oldUrl !== $location.absUrl() ||
+          ($location.$$html5 && $sniffer.history && oldState !== $location.$$state)) {
+        initializing = false;
+
         $rootScope.$evalAsync(function() {
-          if ($rootScope.$broadcast('$locationChangeStart', $location.absUrl(), oldUrl).
-              defaultPrevented) {
+          if ($rootScope.$broadcast('$locationChangeStart', $location.absUrl(), oldUrl,
+              $location.$$state, oldState).defaultPrevented) {
             $location.$$parse(oldUrl);
+            $location.$$state = oldState;
           } else {
-            $browser.url($location.absUrl(), currentReplace);
-            afterLocationChange(oldUrl);
+            setBrowserUrlWithFallback($location.absUrl(), currentReplace,
+                                      oldState === $location.$$state ? null : $location.$$state);
+            afterLocationChange(oldUrl, oldState);
           }
         });
       }
+
       $location.$$replace = false;
 
-      return changeCounter;
+      // we don't need to return anything because $evalAsync will make the digest loop dirty when
+      // there is a change
     });
 
     return $location;
 
-    function afterLocationChange(oldUrl) {
-      $rootScope.$broadcast('$locationChangeSuccess', $location.absUrl(), oldUrl);
+    function afterLocationChange(oldUrl, oldState) {
+      $rootScope.$broadcast('$locationChangeSuccess', $location.absUrl(), oldUrl,
+        $location.$$state, oldState);
     }
 }];
 }

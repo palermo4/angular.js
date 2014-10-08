@@ -303,7 +303,8 @@
  *
  * * `true` - transclude the content (i.e. the child nodes) of the directive's element.
  * * `'element'` - transclude the whole of the directive's element including any directives on this
- *   element that defined at a lower priority than this directive.
+ *   element that defined at a lower priority than this directive. When used, the `template`
+ *   property is ignored.
  *
  *
  * #### `compile`
@@ -1141,7 +1142,7 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
       // We can not compile top level text elements since text nodes can be merged and we will
       // not be able to attach scope data to them, so we will wrap them in <span>
       forEach($compileNodes, function(node, index){
-        if (node.nodeType == 3 /* text node */ && node.nodeValue.match(/\S+/) /* non-empty */ ) {
+        if (node.nodeType == NODE_TYPE_TEXT && node.nodeValue.match(/\S+/) /* non-empty */ ) {
           $compileNodes[index] = jqLite(node).wrap('<span></span>').parent()[0];
         }
       });
@@ -1150,27 +1151,28 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
                            maxPriority, ignoreDirective, previousCompileContext);
       compile.$$addScopeClass($compileNodes);
       var namespace = null;
-      var namespaceAdaptedCompileNodes = $compileNodes;
-      var lastCompileNode;
       return function publicLinkFn(scope, cloneConnectFn, transcludeControllers, parentBoundTranscludeFn, futureParentElement){
         assertArg(scope, 'scope');
         if (!namespace) {
           namespace = detectNamespaceForChildElements(futureParentElement);
         }
-        if (namespace !== 'html' && $compileNodes[0] !== lastCompileNode) {
-          namespaceAdaptedCompileNodes = jqLite(
+        var $linkNode;
+        if (namespace !== 'html') {
+          // When using a directive with replace:true and templateUrl the $compileNodes
+          // (or a child element inside of them)
+          // might change, so we need to recreate the namespace adapted compileNodes
+          // for call to the link function.
+          // Note: This will already clone the nodes...
+          $linkNode = jqLite(
             wrapTemplate(namespace, jqLite('<div>').append($compileNodes).html())
           );
+        } else if (cloneConnectFn) {
+          // important!!: we must call our jqLite.clone() since the jQuery one is trying to be smart
+          // and sometimes changes the structure of the DOM.
+          $linkNode = JQLitePrototype.clone.call($compileNodes);
+        } else {
+          $linkNode = $compileNodes;
         }
-        // When using a directive with replace:true and templateUrl the $compileNodes
-        // might change, so we need to recreate the namespace adapted compileNodes.
-        lastCompileNode = $compileNodes[0];
-
-        // important!!: we must call our jqLite.clone() since the jQuery one is trying to be smart
-        // and sometimes changes the structure of the DOM.
-        var $linkNode = cloneConnectFn
-          ? JQLitePrototype.clone.call(namespaceAdaptedCompileNodes) // IMPORTANT!!!
-          : namespaceAdaptedCompileNodes;
 
         if (transcludeControllers) {
           for (var controllerName in transcludeControllers) {
@@ -1343,7 +1345,7 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
           className;
 
       switch(nodeType) {
-        case 1: /* Element */
+        case NODE_TYPE_ELEMENT: /* Element */
           // use the node name: <directive>
           addDirective(directives,
               directiveNormalize(nodeName_(node)), 'E', maxPriority, ignoreDirective);
@@ -1355,37 +1357,35 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
             var attrEndName = false;
 
             attr = nAttrs[j];
-            if (!msie || msie >= 8 || attr.specified) {
-              name = attr.name;
-              value = trim(attr.value);
+            name = attr.name;
+            value = trim(attr.value);
 
-              // support ngAttr attribute binding
-              ngAttrName = directiveNormalize(name);
-              if (isNgAttr = NG_ATTR_BINDING.test(ngAttrName)) {
-                name = snake_case(ngAttrName.substr(6), '-');
-              }
-
-              var directiveNName = ngAttrName.replace(/(Start|End)$/, '');
-              if (directiveIsMultiElement(directiveNName)) {
-                if (ngAttrName === directiveNName + 'Start') {
-                  attrStartName = name;
-                  attrEndName = name.substr(0, name.length - 5) + 'end';
-                  name = name.substr(0, name.length - 6);
-                }
-              }
-
-              nName = directiveNormalize(name.toLowerCase());
-              attrsMap[nName] = name;
-              if (isNgAttr || !attrs.hasOwnProperty(nName)) {
-                  attrs[nName] = value;
-                  if (getBooleanAttrName(node, nName)) {
-                    attrs[nName] = true; // presence means true
-                  }
-              }
-              addAttrInterpolateDirective(node, directives, value, nName, isNgAttr);
-              addDirective(directives, nName, 'A', maxPriority, ignoreDirective, attrStartName,
-                            attrEndName);
+            // support ngAttr attribute binding
+            ngAttrName = directiveNormalize(name);
+            if (isNgAttr = NG_ATTR_BINDING.test(ngAttrName)) {
+              name = snake_case(ngAttrName.substr(6), '-');
             }
+
+            var directiveNName = ngAttrName.replace(/(Start|End)$/, '');
+            if (directiveIsMultiElement(directiveNName)) {
+              if (ngAttrName === directiveNName + 'Start') {
+                attrStartName = name;
+                attrEndName = name.substr(0, name.length - 5) + 'end';
+                name = name.substr(0, name.length - 6);
+              }
+            }
+
+            nName = directiveNormalize(name.toLowerCase());
+            attrsMap[nName] = name;
+            if (isNgAttr || !attrs.hasOwnProperty(nName)) {
+                attrs[nName] = value;
+                if (getBooleanAttrName(node, nName)) {
+                  attrs[nName] = true; // presence means true
+                }
+            }
+            addAttrInterpolateDirective(node, directives, value, nName, isNgAttr);
+            addDirective(directives, nName, 'A', maxPriority, ignoreDirective, attrStartName,
+                          attrEndName);
           }
 
           // use class as directive
@@ -1400,10 +1400,10 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
             }
           }
           break;
-        case 3: /* Text Node */
+        case NODE_TYPE_TEXT: /* Text Node */
           addTextInterpolateDirective(directives, node.nodeValue);
           break;
-        case 8: /* Comment */
+        case NODE_TYPE_COMMENT: /* Comment */
           try {
             match = COMMENT_DIRECTIVE_REGEXP.exec(node.nodeValue);
             if (match) {
@@ -1443,7 +1443,7 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
                       "Unterminated attribute, found '{0}' but no matching '{1}' found.",
                       attrStart, attrEnd);
           }
-          if (node.nodeType == 1 /** Element **/) {
+          if (node.nodeType == NODE_TYPE_ELEMENT) {
             if (node.hasAttribute(attrStart)) depth++;
             if (node.hasAttribute(attrEnd)) depth--;
           }
@@ -1622,11 +1622,11 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
             if (jqLiteIsTextNode(directiveValue)) {
               $template = [];
             } else {
-              $template = jqLite(wrapTemplate(directive.templateNamespace, trim(directiveValue)));
+              $template = removeComments(wrapTemplate(directive.templateNamespace, trim(directiveValue)));
             }
             compileNode = $template[0];
 
-            if ($template.length != 1 || compileNode.nodeType !== 1) {
+            if ($template.length != 1 || compileNode.nodeType !== NODE_TYPE_ELEMENT) {
               throw $compileMinErr('tplrt',
                   "Template for directive '{0}' must have exactly one root element. {1}",
                   directiveName, '');
@@ -2104,11 +2104,11 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
             if (jqLiteIsTextNode(content)) {
               $template = [];
             } else {
-              $template = jqLite(wrapTemplate(templateNamespace, trim(content)));
+              $template = removeComments(wrapTemplate(templateNamespace, trim(content)));
             }
             compileNode = $template[0];
 
-            if ($template.length != 1 || compileNode.nodeType !== 1) {
+            if ($template.length != 1 || compileNode.nodeType !== NODE_TYPE_ELEMENT) {
               throw $compileMinErr('tplrt',
                   "Template for directive '{0}' must have exactly one root element. {1}",
                   origAsyncDirective.name, templateUrl);
@@ -2290,6 +2290,11 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
                   throw $compileMinErr('nodomevents',
                       "Interpolations for HTML DOM event attributes are disallowed.  Please use the " +
                           "ng- versions (such as ng-click instead of onclick) instead.");
+                }
+
+                // If the attribute was removed, then we are done
+                if (!attr[name]) {
+                  return;
                 }
 
                 // we need to interpolate again, in case the attribute value has been updated
@@ -2517,4 +2522,21 @@ function tokenDifference(str1, str2) {
     values += (values.length > 0 ? ' ' : '') + token;
   }
   return values;
+}
+
+function removeComments(jqNodes) {
+  jqNodes = jqLite(jqNodes);
+  var i = jqNodes.length;
+
+  if (i <= 1) {
+    return jqNodes;
+  }
+
+  while (i--) {
+    var node = jqNodes[i];
+    if (node.nodeType === NODE_TYPE_COMMENT) {
+      splice.call(jqNodes, i, 1);
+    }
+  }
+  return jqNodes;
 }
